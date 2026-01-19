@@ -1020,19 +1020,22 @@ a \geq \alpha_c + \frac{\ln(C/\varepsilon_{\mathrm{tail}})}{t_{\mathrm{end}}}
 
 All code, data, and scripts to reproduce the results in this paper are available at:
 
-\texttt{https://github.com/gpavlov/fft-nilt-cfl}
+\url{https://github.com/gogipav14/nilt-cfl}
 
 The repository includes:
 \begin{itemize}
-\item \texttt{repro/}: NumPy reference implementation
-\item \texttt{repro\_jax/}: JAX GPU implementation
-\item \texttt{repro/benchmark\_numpy\_jax\_torch.py}: Three-way benchmark script
-\item \texttt{repro/results\_three\_way.json}: Benchmark results
+\item \texttt{nilt\_fft.py}, \texttt{tuner.py}: Core FFT-NILT implementation
+\item \texttt{problems.py}, \texttt{metrics.py}: Benchmark problems and error metrics
+\item \texttt{case\_study\_adsorption.py}: Fixed-bed breakthrough case study
+\item \texttt{benchmark\_pareto.py}: Accuracy vs runtime Pareto curves
+\item \texttt{ablation\_study.py}: CFL constraint ablation analysis
+\item \texttt{reproduce\_paper.py}: Master script for all results
 \end{itemize}
 
-To reproduce the three-way benchmark:
+To reproduce all paper results:
 \begin{verbatim}
-python repro/benchmark_numpy_jax_torch.py --n-runs 50 --pretty
+pip install -r requirements.txt
+python reproduce_paper.py
 \end{verbatim}
 
 \end{document}
