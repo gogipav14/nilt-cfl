@@ -35,14 +35,9 @@ def reproduce_table5():
     """Reproduce Table 5: Accuracy comparison."""
     print_header("Table 5: Accuracy Comparison (CFL-informed vs Default)")
 
-    from repro_nilt_cfl import run_calibration
-    from problems import get_all_problems
+    from repro_nilt_cfl import reproduce_table2
 
-    results = run_calibration(
-        problems=get_all_problems(),
-        t_end=10.0,
-        verbose=True
-    )
+    results = reproduce_table2(t_end=10.0, verbose=True)
 
     # Print table format
     print("\nTable 5 data:")

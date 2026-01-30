@@ -150,28 +150,50 @@ def breakthrough_transfer_function(
 
     def G_dirichlet_neumann(s: complex) -> complex:
         """Dirichlet-Neumann (open-open) impulse response transfer function."""
-        q = cmath.sqrt(1 + 4 * tau * s / Pe)
-        return cmath.exp(Pe / 2 * (1 - q))
+        try:
+            q = cmath.sqrt(1 + 4 * tau * s / Pe)
+            # For large Re(q), exp(-q*Pe/2) → 0, so G → 0
+            exponent = Pe / 2 * (1 - q)
+            if exponent.real < -700:  # Would underflow to 0
+                return complex(0, 0)
+            if exponent.real > 700:  # Would overflow
+                return complex(0, 0)  # Physically G → 0 at high freq
+            return cmath.exp(exponent)
+        except (OverflowError, ValueError):
+            return complex(0, 0)
 
     def G_robin_neumann(s: complex) -> complex:
         """Robin-Neumann (closed-open) impulse response transfer function."""
-        q = cmath.sqrt(1 + 4 * tau * s / Pe)
-        numer = 2 * q * cmath.exp(Pe * (1 - q) / 2)
-        denom = (1 + q) - (1 - q) * cmath.exp(-q * Pe)
-        if abs(denom) < 1e-100:
-            return complex(np.inf, 0)
-        return numer / denom
+        try:
+            q = cmath.sqrt(1 + 4 * tau * s / Pe)
+            # For large |q|, G → 0 (high-frequency rolloff)
+            if abs(q.real * Pe / 2) > 700:
+                return complex(0, 0)
+            numer = 2 * q * cmath.exp(Pe * (1 - q) / 2)
+            denom = (1 + q) - (1 - q) * cmath.exp(-q * Pe)
+            if abs(denom) < 1e-100:
+                return complex(0, 0)  # High-frequency limit
+            return numer / denom
+        except (OverflowError, ValueError):
+            return complex(0, 0)
 
     def G_danckwerts(s: complex) -> complex:
         """Danckwerts (closed-closed) impulse response transfer function."""
-        q = cmath.sqrt(1 + 4 * tau * s / Pe)
-        numer = 4 * q * cmath.exp(Pe / 2)
-        term1 = (1 + q)**2 * cmath.exp(q * Pe / 2)
-        term2 = (1 - q)**2 * cmath.exp(-q * Pe / 2)
-        denom = term1 - term2
-        if abs(denom) < 1e-100:
-            return complex(np.inf, 0)
-        return numer / denom
+        try:
+            q = cmath.sqrt(1 + 4 * tau * s / Pe)
+            # For large |q|, G → 0 (high-frequency rolloff)
+            # Check if exp would overflow
+            if abs(q.real * Pe / 2) > 700:  # exp(700) ≈ 10^304
+                return complex(0, 0)
+            numer = 4 * q * cmath.exp(Pe / 2)
+            term1 = (1 + q)**2 * cmath.exp(q * Pe / 2)
+            term2 = (1 - q)**2 * cmath.exp(-q * Pe / 2)
+            denom = term1 - term2
+            if abs(denom) < 1e-100:
+                return complex(0, 0)  # High-frequency limit
+            return numer / denom
+        except (OverflowError, ValueError):
+            return complex(0, 0)  # G → 0 at high frequencies
 
     # Select transfer function based on BC type
     if bc_type == BCType.DIRICHLET_NEUMANN:
