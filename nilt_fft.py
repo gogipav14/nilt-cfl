@@ -1,37 +1,35 @@
 """
 FFT-based Numerical Inverse Laplace Transform implementation.
 
-Implements the Dubner-Abate (1968) / Hsu-Dranoff (1987) method for
-CFL-stable inversion of Laplace transforms.
+Implements the Dubner-Abate (1968) / Hsu-Dranoff (1987) method with
+CFL-informed parameter selection for stable inversion of Laplace transforms.
 
-For real-valued f(t), the Bromwich integral reduces to:
+For real-valued f(t), the Bromwich integral reduces to (Eq. 3):
     f(t) = exp(at)/π * Re[∫_0^∞ F(a+iω) exp(iωt) dω]
 
-Dubner-Abate discretization (trapezoidal quadrature on positive frequencies):
+Discretized with trapezoidal quadrature (Eq. 4):
     f(t_j) ≈ exp(a t_j)/T * Re[½F(a) + Σ_{k=1}^{N-1} F(a+ikΔω) exp(ikΔω t_j)]
 
-IMPORTANT: Why One-Sided (Not Hermitian) Construction
+where Δω = π/T and Δt = 2T/N.
 
-For Laplace inversion, F(a+iω) ≠ conj(F(a-iω)) in general because F(s) is
-evaluated along the Bromwich contour Re(s) = a, not on the imaginary axis.
-The spectrum is fundamentally one-sided, and we extract the physical signal
-by taking Re[] of the sum.
+The sum is computed via FFT in O(N log N) operations.
 
-The "imaginary leakage" metric (ε_Im) measures numerical residual, not
-implementation error. High ε_Im in one-sided evaluation is expected because:
-- We sample positive frequencies only (ω = 0, Δω, 2Δω, ...)
-- The IFFT "sees" this as a non-Hermitian spectrum
-- The imaginary component is the "complement" that gets discarded by Re[]
+Quality Diagnostic (Eq. 12):
+    ε_Im = max|Im(f̃)| / max|Re(f̃)|
 
-For CFL-tuned parameters, ε_Im correlates with:
-- Aliasing error (controlled by a and T)
-- Truncation error (controlled by N)
-- NOT with implementation correctness
+For real f(t), the output should be purely real. Non-zero imaginary content
+indicates numerical issues and serves as a quality metric. The threshold
+ε_Im ≤ 10^{-2} (Eq. 13) indicates acceptable quality.
 
-Connection to NILT-CFL conditions:
-- Constraint 1 (dynamic range): a*t_max < L - δ_s ensures exp(at) doesn't overflow
+CFL-like Feasibility Condition (Eq. 10):
+    α_c * t_max + ln(C/ε_tail) < L - δ_s
+
+where:
+- Constraint 1 (dynamic range): a*t_max < L - δ_s prevents overflow
 - Constraint 2 (spectral placement): a > α_c ensures contour right of singularities
-- Constraint 3 (aliasing): exp(-2aT) < ε_tail ensures wraparound suppression
+- Constraint 3 (aliasing suppression): adequate (a-α_c) ensures wraparound decay
+
+Reference: Paper submitted to Chemical Engineering Science (2026)
 """
 
 from __future__ import annotations
@@ -150,12 +148,13 @@ def fft_nilt_one_sided(
 
 def eps_im(z_ifft: np.ndarray) -> float:
     """
-    Compute imaginary leakage metric.
+    Compute imaginary leakage metric (Eq. 12).
 
-    ε_Im = RMS(Im(z)) / RMS(Re(z))
+    ε_Im = max_j |Im(f̃(t_j))| / max_j |Re(f̃(t_j))|
 
-    This measures the relative magnitude of the imaginary component
-    that should be zero for real-valued f(t).
+    For real-valued f(t), the NILT output should be purely real.
+    Non-zero imaginary content indicates numerical issues (aliasing,
+    roundoff, truncation) and serves as a quality diagnostic.
 
     Parameters
     ----------
@@ -165,18 +164,23 @@ def eps_im(z_ifft: np.ndarray) -> float:
     Returns
     -------
     eps : float
-        Imaginary leakage metric
+        Imaginary leakage metric (should be < 1e-2 for quality results)
+
+    Reference
+    ---------
+    Paper Eq. (12): ε_Im = max|Im(f̃)| / max|Re(f̃)|
+    Quality threshold Eq. (13): ε_Im ≤ 10^{-2}
     """
     real_part = np.real(z_ifft)
     imag_part = np.imag(z_ifft)
 
-    rms_real = np.sqrt(np.mean(real_part**2))
-    rms_imag = np.sqrt(np.mean(imag_part**2))
+    max_real = np.max(np.abs(real_part))
+    max_imag = np.max(np.abs(imag_part))
 
-    if rms_real < 1e-300:
+    if max_real < 1e-300:
         return np.inf
 
-    return rms_imag / rms_real
+    return max_imag / max_real
 
 
 def n_doubling_error(
