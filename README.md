@@ -3,11 +3,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-This repository contains the code and reproducibility package for:
 
-> **Systematic Parameter Selection for FFT-based Numerical Inverse Laplace Transform: CFL-informed Tuning Rules and Quality Diagnostics**
-> Gorgi Pavlov
-> *Computers & Chemical Engineering*, 2025
 
 ## Overview
 
