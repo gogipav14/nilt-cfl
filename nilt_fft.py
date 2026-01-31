@@ -11,18 +11,16 @@ Using the conjugate symmetry F(a-iω) = conj(F(a+iω)) for real f(t), this
 is equivalent to the one-sided form (Eq. 3):
     f(t) = (e^{at}/π) Re[∫_0^∞ F(a+iω) e^{iωt} dω]
 
-FFT Acceleration (Half-Spectrum Hermitian Construction):
+FFT Acceleration (DFT-Consistent Frequency Mapping):
     The integral is discretized with Δω = π/T and Δt = 2T/N.
-    To avoid numerical overflow at negative frequencies:
-    1. Evaluate F only at positive frequencies: k = 0, 1, ..., N/2
-    2. Construct negative frequency bins via conjugate symmetry:
-       G[N-k] = conj(G[k]) for k = 1, ..., N/2-1
-    3. Apply IFFT to get nearly-real output in O(N log N) operations
+    Using DFT-consistent signed frequency grid (fftfreq), bins k > N/2
+    map to negative frequencies, preserving Hermitian symmetry.
+    The sum is computed via IFFT in O(N log N) operations.
 
 Quality Diagnostic (Eq. 12):
     ε_Im = max|Im(f̃)| / max|Re(f̃)|
 
-For real f(t) with correct Hermitian construction, the IFFT output should be
+For real f(t) with correct frequency mapping, the IFFT output should be
 nearly real. Small ε_Im (< 10^{-2}, Eq. 13) indicates good quality.
 Large ε_Im indicates aliasing, truncation, or parameter issues.
 
@@ -50,15 +48,12 @@ def fft_nilt(
     return_complex: bool = False
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Compute inverse Laplace transform using FFT with half-spectrum Hermitian construction.
+    Compute inverse Laplace transform using FFT-accelerated Bromwich integral.
 
-    For real f(t), exploits conjugate symmetry F(a-iω) = conj(F(a+iω)):
-    - Evaluates F only at positive frequencies k = 0, 1, ..., N/2
-    - Constructs negative frequency bins via conjugate mirroring
-    - Applies IFFT to get nearly-real output
-
-    This avoids evaluating F at negative frequencies (which can overflow
-    for certain transfer functions) while ensuring proper DFT structure.
+    Uses DFT-consistent signed frequency grid for proper Hermitian symmetry.
+    For real f(t), the Laplace transform satisfies F(conj(s)) = conj(F(s)),
+    so F(a-iω) = conj(F(a+iω)). The signed frequency grid exploits this
+    symmetry, yielding nearly-real IFFT output when parameters are well-tuned.
 
     Parameters
     ----------
@@ -92,43 +87,34 @@ def fft_nilt(
     The imaginary leakage ε_Im = max|Im|/max|Re| should be small (< 0.01)
     for well-tuned parameters, indicating the IFFT output is nearly real.
     """
-    # Frequency spacing: Δω = π/T
-    delta_omega = np.pi / T
-
     # Time step: Δt = 2T/N
     delta_t = 2 * T / N
 
     # Time grid: t_j = j * Δt for j = 0, ..., N-1
     t = np.arange(N) * delta_t
 
-    # === Half-spectrum approach ===
-    # Only evaluate F at positive frequencies k = 0, 1, ..., N/2
-    n_pos = N // 2 + 1
-    omega_pos = np.arange(n_pos) * delta_omega  # ω = 0, Δω, 2Δω, ..., N/2 * Δω
-    s_pos = a + 1j * omega_pos
+    # DFT-consistent signed frequency grid using fftfreq
+    # This maps bins k > N/2 to negative frequencies, matching IFFT conventions
+    # fftfreq returns cycles/sample, multiply by 2π to get angular frequency
+    omega = 2 * np.pi * np.fft.fftfreq(N, d=delta_t)
+    s = a + 1j * omega
 
-    # Evaluate F only at positive frequencies (avoids overflow at negative ω)
-    G_pos = np.array([F(sk) for sk in s_pos], dtype=np.complex128)
+    # Evaluate F(s) at Bromwich contour points (positive AND negative ω)
+    G = np.array([F(sk) for sk in s], dtype=np.complex128)
 
-    # Apply trapezoidal weight at DC (k=0 endpoint)
-    G_pos[0] = G_pos[0] * 0.5
-
-    # Construct full Hermitian spectrum via conjugate mirroring
-    # For DFT: G[k] for k=0..N/2, then G[N-k] = conj(G[k]) for k=1..N/2-1
-    if N % 2 == 0:
-        # Even N: G = [G[0], G[1], ..., G[N/2], conj(G[N/2-1]), ..., conj(G[1])]
-        G = np.concatenate([G_pos, np.conj(G_pos[-2:0:-1])])
-    else:
-        # Odd N: G = [G[0], G[1], ..., G[(N-1)/2], conj(G[(N-1)/2]), ..., conj(G[1])]
-        G = np.concatenate([G_pos, np.conj(G_pos[-1:0:-1])])
+    # Note: NO DC half-weight needed with 1/(2T) scaling
+    # The fftfreq two-sided sum effectively doubles interior terms (Hermitian pairs)
+    # Using 1/(2T) compensates for this doubling
 
     # Compute sum via IFFT
-    # Hermitian spectrum → nearly real IFFT output
+    # The signed frequency grid ensures Hermitian symmetry for real f(t)
     z_ifft = N * np.fft.ifft(G)
 
     # Apply exponential factor, scaling, and extract real part
-    # f(t) = exp(a*t) / T * Re[sum]
-    f = np.exp(a * t) / T * np.real(z_ifft)
+    # For the two-sided Bromwich integral discretized with Δω = π/T:
+    # f(t) = (e^{at}/(2π)) × Δω × sum = (e^{at}/(2T)) × sum
+    # Interior terms are doubled by Hermitian pairing, so 1/(2T) gives correct one-sided behavior
+    f = np.exp(a * t) / (2 * T) * np.real(z_ifft)
 
     return f, t, z_ifft
 
@@ -174,10 +160,10 @@ def fft_nilt_one_sided(
     s = a + 1j * omega
 
     G = np.array([F(sk) for sk in s], dtype=np.complex128)
-    G[0] = G[0] / 2  # Trapezoidal weight for DC
+    # No DC weight needed with 1/(2T) scaling
 
     z_ifft = N * np.fft.ifft(G)
-    f = np.exp(a * t) / T * np.real(z_ifft)
+    f = np.exp(a * t) / (2 * T) * np.real(z_ifft)
 
     return f, t, z_ifft
 
