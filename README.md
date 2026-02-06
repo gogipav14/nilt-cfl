@@ -188,8 +188,6 @@ print(f"Pe = {params.Pe:.1f}, τ = {params.tau:.1f} s")
   title={Systematic Parameter Selection for FFT-based Numerical Inverse
          Laplace Transform: CFL-informed Tuning Rules and Quality Diagnostics},
   author={Pavlov, Gorgi},
-  journal={Computers \& Chemical Engineering},
-  year={2025}
 }
 ```
 
