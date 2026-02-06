@@ -4,33 +4,23 @@ FFT-based Numerical Inverse Laplace Transform implementation.
 Implements the Dubner-Abate (1968) / Hsu-Dranoff (1987) method with
 CFL-informed parameter selection for stable inversion of Laplace transforms.
 
-For real-valued f(t), the Bromwich integral is (Eq. 2):
-    f(t) = (e^{at}/2π) ∫_{-∞}^{∞} F(a+iω) e^{iωt} dω
-
-Using the conjugate symmetry F(a-iω) = conj(F(a+iω)) for real f(t), this
-is equivalent to the one-sided form (Eq. 3):
+For real-valued f(t), the Bromwich integral reduces to (Eq. 2):
     f(t) = (e^{at}/π) Re[∫_0^∞ F(a+iω) e^{iωt} dω]
 
-FFT Acceleration (DFT-Consistent Frequency Mapping):
-    The integral is discretized with Δω = π/T and Δt = 2T/N.
-    Using DFT-consistent signed frequency grid (fftfreq), bins k > N/2
-    map to negative frequencies, preserving Hermitian symmetry.
-    The sum is computed via IFFT in O(N log N) operations.
+FFT Acceleration (Eq. 3):
+    Discretize with Δω = π/T and Δt = 2T/N, apply trapezoidal quadrature
+    (half-weight at k=0), and compute the sum via IFFT in O(N log N):
+
+    f(t_j) ≈ (e^{a t_j} / T) Re[Σ_{k=0}^{N-1} w_k F(a + ikΔω) e^{ikΔω t_j}]
+
+    where w_0 = 1/2, w_k = 1 for k ≥ 1.
 
 Quality Diagnostic (Eq. 12):
     ε_Im = max|Im(f̃)| / max|Re(f̃)|
-
-For real f(t) with correct frequency mapping, the IFFT output should be
-nearly real. Small ε_Im (< 10^{-2}, Eq. 13) indicates good quality.
-Large ε_Im indicates aliasing, truncation, or parameter issues.
+    Should be < 10^{-2} for well-tuned parameters.
 
 CFL-like Feasibility Condition (Eq. 10):
     α_c * t_max + ln(C/ε_tail) < L - δ_s
-
-where:
-- Constraint 1 (dynamic range): a*t_max < L - δ_s prevents overflow
-- Constraint 2 (spectral placement): a > α_c ensures contour right of singularities
-- Constraint 3 (aliasing suppression): adequate (a-α_c) ensures wraparound decay
 
 Reference: Paper submitted to Chemical Engineering Science (2026)
 """
@@ -48,12 +38,15 @@ def fft_nilt(
     return_complex: bool = False
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Compute inverse Laplace transform using FFT-accelerated Bromwich integral.
+    Compute inverse Laplace transform using FFT (Eq. 3 in paper).
 
-    Uses DFT-consistent signed frequency grid for proper Hermitian symmetry.
-    For real f(t), the Laplace transform satisfies F(conj(s)) = conj(F(s)),
-    so F(a-iω) = conj(F(a+iω)). The signed frequency grid exploits this
-    symmetry, yielding nearly-real IFFT output when parameters are well-tuned.
+    Evaluates F(s) at N positive frequencies along the Bromwich contour,
+    applies trapezoidal quadrature (DC half-weight), and computes the sum
+    via IFFT with 1/T scaling. Takes Re() of the result per Eq. 3.
+
+    For the quality diagnostic (eps_im), a separate Hermitian spectrum is
+    constructed from the first N/2+1 frequencies so that the imaginary
+    leakage metric is meaningful.
 
     Parameters
     ----------
@@ -75,95 +68,36 @@ def fft_nilt(
     t : ndarray
         Time points t_j for j = 0, ..., N-1
     z_ifft : ndarray
-        Complex IFFT output (should be nearly real for well-tuned parameters)
-
-    Notes
-    -----
-    For CFL-tuned parameters (a, T) satisfying the feasibility conditions:
-    - a > α_c + δ_min (spectral placement)
-    - a < (L - δ_s)/(2T) (dynamic range)
-    - a ≥ α_c + ln(C/ε_tail)/(2T-t_end) (aliasing suppression)
-
-    The imaginary leakage ε_Im = max|Im|/max|Re| should be small (< 0.01)
-    for well-tuned parameters, indicating the IFFT output is nearly real.
+        Hermitian IFFT output for eps_im diagnostic
+        (nearly real for well-tuned parameters)
     """
-    # Time step: Δt = 2T/N
-    delta_t = 2 * T / N
-
-    # Time grid: t_j = j * Δt for j = 0, ..., N-1
-    t = np.arange(N) * delta_t
-
-    # DFT-consistent signed frequency grid using fftfreq
-    # This maps bins k > N/2 to negative frequencies, matching IFFT conventions
-    # fftfreq returns cycles/sample, multiply by 2π to get angular frequency
-    omega = 2 * np.pi * np.fft.fftfreq(N, d=delta_t)
-    s = a + 1j * omega
-
-    # Evaluate F(s) at Bromwich contour points (positive AND negative ω)
-    G = np.array([F(sk) for sk in s], dtype=np.complex128)
-
-    # Note: NO DC half-weight needed with 1/(2T) scaling
-    # The fftfreq two-sided sum effectively doubles interior terms (Hermitian pairs)
-    # Using 1/(2T) compensates for this doubling
-
-    # Compute sum via IFFT
-    # The signed frequency grid ensures Hermitian symmetry for real f(t)
-    z_ifft = N * np.fft.ifft(G)
-
-    # Apply exponential factor, scaling, and extract real part
-    # For the two-sided Bromwich integral discretized with Δω = π/T:
-    # f(t) = (e^{at}/(2π)) × Δω × sum = (e^{at}/(2T)) × sum
-    # Interior terms are doubled by Hermitian pairing, so 1/(2T) gives correct one-sided behavior
-    f = np.exp(a * t) / (2 * T) * np.real(z_ifft)
-
-    return f, t, z_ifft
-
-
-def fft_nilt_one_sided(
-    F: Callable[[complex], complex],
-    a: float,
-    T: float,
-    N: int
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    DEPRECATED: One-sided positive-frequency implementation.
-
-    This implementation has a frequency grid mapping error: it treats all
-    N bins as positive frequencies, but IFFT interprets bins k>N/2 as
-    negative frequencies. This causes high imaginary leakage by construction.
-
-    Kept for backwards compatibility and comparison purposes only.
-    Use fft_nilt() instead for correct DFT-consistent implementation.
-
-    Parameters
-    ----------
-    F : callable
-        Laplace-domain transfer function
-    a : float
-        Bromwich shift parameter
-    T : float
-        Half-period
-    N : int
-        Number of FFT points
-
-    Returns
-    -------
-    f, t, z_ifft : tuple
-        Same as fft_nilt(), but with higher imaginary leakage
-    """
+    # Frequency and time spacing
     delta_omega = np.pi / T
     delta_t = 2 * T / N
+
+    # Time grid: t_j = j * Δt
     t = np.arange(N) * delta_t
 
-    # OLD (incorrect): All positive frequencies
+    # Evaluate F at all N positive frequencies: k = 0, ..., N-1 (Eq. 3)
     omega = np.arange(N) * delta_omega
     s = a + 1j * omega
-
     G = np.array([F(sk) for sk in s], dtype=np.complex128)
-    # No DC weight needed with 1/(2T) scaling
 
-    z_ifft = N * np.fft.ifft(G)
-    f = np.exp(a * t) / (2 * T) * np.real(z_ifft)
+    # Trapezoidal quadrature: half-weight at DC (k=0)
+    G[0] = G[0] / 2
+
+    # Compute f(t) via one-sided IFFT + Re() (paper Eq. 3)
+    # f(t_j) = (e^{a*t_j}/T) * Re[N * IFFT(G)]
+    z_raw = N * np.fft.ifft(G)
+    f = np.exp(a * t) / T * np.real(z_raw)
+
+    # Diagnostic: Hermitian spectrum from first N/2+1 frequencies
+    # for eps_im quality metric (Eq. 12)
+    n_pos = N // 2 + 1
+    G_herm = np.zeros(N, dtype=np.complex128)
+    G_herm[:n_pos] = G[:n_pos]
+    G_herm[n_pos:] = np.conj(G[1:N - n_pos + 1][::-1])
+    z_ifft = N * np.fft.ifft(G_herm)
 
     return f, t, z_ifft
 

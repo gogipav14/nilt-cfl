@@ -134,9 +134,10 @@ def de_hoog_nilt(
     T: float = None
 ) -> float:
     """
-    de Hoog algorithm for numerical inverse Laplace transform.
+    de Hoog et al. (1982) numerical inverse Laplace transform.
 
-    Accelerated summation using Padé approximants.
+    Accelerates the Fourier series representation of the Bromwich integral
+    using the Wynn epsilon algorithm (equivalent to diagonal Padé approximation).
 
     Parameters
     ----------
@@ -147,7 +148,7 @@ def de_hoog_nilt(
     a : float
         Bromwich shift
     M : int
-        Number of terms (default 20)
+        Number of terms (default 20, uses 2M+1 function evaluations)
     T : float
         Integration period (default 2*t)
 
@@ -155,6 +156,12 @@ def de_hoog_nilt(
     -------
     f : float
         Approximation to f(t)
+
+    References
+    ----------
+    de Hoog, F.R., Knight, J.H., Stokes, A.N. (1982). An improved method
+    for numerical inversion of Laplace transforms. SIAM J. Sci. Stat. Comput.
+    3(3):357-366.
     """
     if t <= 0:
         return 0.0
@@ -163,31 +170,38 @@ def de_hoog_nilt(
         T = 2 * t
 
     omega = np.pi / T
+    n_terms = 2 * M + 1
 
-    # Compute coefficients
-    d = np.zeros(2 * M + 1, dtype=complex)
-    for k in range(2 * M + 1):
-        s = a + 1j * k * omega
-        d[k] = F(s)
-        if k == 0:
-            d[k] /= 2
+    # Sample F along Bromwich contour: c_k = F(a + ik*omega)
+    c = np.zeros(n_terms, dtype=complex)
+    for k in range(n_terms):
+        c[k] = F(a + 1j * k * omega)
+    c[0] /= 2  # trapezoidal DC half-weight
 
-    # Quotient-difference algorithm for Padé approximants
-    A = np.zeros((2 * M + 2, 2 * M + 1), dtype=complex)
-    B = np.zeros((2 * M + 2, 2 * M + 1), dtype=complex)
-
-    A[0, :] = 0
-    A[1, :] = d[0]
-    B[0, :] = 1
-    B[1, :] = 1
-
-    for n in range(1, 2 * M + 1):
-        A[n + 1, n:] = A[n, n - 1:-1] + (d[n:] / d[n - 1:-1]) * (A[n, n:] - A[n - 1, n - 1:-1])
-        B[n + 1, n:] = B[n, n - 1:-1] + (d[n:] / d[n - 1:-1]) * (B[n, n:] - B[n - 1, n - 1:-1])
-
-    # Evaluate at z = exp(i * omega * t)
+    # Partial sums of Fourier series at z = exp(i*omega*t)
     z = np.exp(1j * omega * t)
-    result = A[2 * M + 1, 2 * M] / B[2 * M + 1, 2 * M]
+    z_powers = z ** np.arange(n_terms)
+    S = np.cumsum(c * z_powers)
+
+    # Wynn epsilon algorithm for series acceleration
+    # ε_{-1}(j) = 0,  ε_0(j) = S_j
+    # ε_{k+1}(j) = ε_{k-1}(j+1) + 1/(ε_k(j+1) - ε_k(j))
+    col_prev = np.zeros(n_terms, dtype=complex)  # column k-1 (starts as ε_{-1})
+    col_curr = S.copy()                           # column k   (starts as ε_0)
+
+    for k in range(1, n_terms):
+        col_next = np.zeros(n_terms - k, dtype=complex)
+        for j in range(n_terms - k):
+            diff = col_curr[j + 1] - col_curr[j]
+            if abs(diff) < 1e-300:
+                col_next[j] = col_prev[j + 1]
+            else:
+                col_next[j] = col_prev[j + 1] + 1.0 / diff
+        col_prev = col_curr[:n_terms - k]
+        col_curr = col_next
+
+    # col_curr[0] = ε_{2M}(0) = accelerated partial sum
+    result = col_curr[0]
 
     return np.exp(a * t) / T * np.real(result)
 

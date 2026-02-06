@@ -103,18 +103,9 @@ def get_jax_fft_nilt():
     @partial(jax.jit, static_argnums=(0, 3))
     def fft_nilt_jax(F, a: float, T: float, N: int):
         """
-        FFT-NILT using JAX.
+        FFT-NILT using JAX (matches paper Eq. 3).
 
-        Parameters
-        ----------
-        F : callable
-            Transfer function F(s) - must be JAX-traceable
-        a : float
-            Bromwich shift
-        T : float
-            Half-period
-        N : int
-            FFT size
+        One-sided positive frequencies, DC half-weight, 1/T scaling.
         """
         delta_omega = jnp.pi / T
         delta_t = 2 * T / N
@@ -125,11 +116,12 @@ def get_jax_fft_nilt():
 
         s = a + 1j * omega
         G = jax.vmap(F)(s)
+
+        # Trapezoidal DC half-weight
         G = G.at[0].set(G[0] / 2)
 
         z_ifft = N * jnp.fft.ifft(G)
-        f_complex = jnp.exp(a * t) / T * z_ifft
-        f = jnp.real(f_complex)
+        f = jnp.exp(a * t) / T * jnp.real(z_ifft)
 
         return f, t, z_ifft
 
