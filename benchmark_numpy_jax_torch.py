@@ -15,7 +15,6 @@ import argparse
 import json
 import time
 import sys
-from pathlib import Path
 from typing import Dict, Any, List, Optional
 import numpy as np
 
@@ -89,50 +88,61 @@ def benchmark_numpy(F, a: float, T: float, N: int, n_runs: int = 100, n_warmup: 
 # JAX FFT-NILT
 # ============================================================================
 
-_jax_cache = None
+_jax_fft_nilt = None
 
-def load_jax():
-    """Load JAX modules."""
-    global _jax_cache
-    if _jax_cache is not None:
-        return _jax_cache
+def get_jax_fft_nilt():
+    """Create JAX FFT-NILT function with JIT compilation."""
+    global _jax_fft_nilt
+    if _jax_fft_nilt is not None:
+        return _jax_fft_nilt
 
     import jax
     import jax.numpy as jnp
-    import importlib.util
+    from functools import partial
 
-    repro_jax_path = Path(__file__).parent.parent / "repro_jax"
+    @partial(jax.jit, static_argnums=(0, 3))
+    def fft_nilt_jax(F, a: float, T: float, N: int):
+        """
+        FFT-NILT using JAX.
 
-    # Load nilt_fft
-    nilt_path = repro_jax_path / "nilt_fft.py"
-    spec = importlib.util.spec_from_file_location("nilt_fft_jax", nilt_path)
-    nilt_module = importlib.util.module_from_spec(spec)
-    sys.modules["nilt_fft_jax"] = nilt_module
-    spec.loader.exec_module(nilt_module)
+        Parameters
+        ----------
+        F : callable
+            Transfer function F(s) - must be JAX-traceable
+        a : float
+            Bromwich shift
+        T : float
+            Half-period
+        N : int
+            FFT size
+        """
+        delta_omega = jnp.pi / T
+        delta_t = 2 * T / N
 
-    # Load problems
-    problems_path = repro_jax_path / "problems.py"
-    spec = importlib.util.spec_from_file_location("problems_jax", problems_path)
-    problems_module = importlib.util.module_from_spec(spec)
-    sys.modules["problems_jax"] = problems_module
-    spec.loader.exec_module(problems_module)
+        k = jnp.arange(N)
+        t = k * delta_t
+        omega = k * delta_omega
 
-    _jax_cache = {
-        "jax": jax,
-        "jnp": jnp,
-        "fft_nilt": nilt_module.fft_nilt_jax,
-        "problems": problems_module
-    }
-    return _jax_cache
+        s = a + 1j * omega
+        G = jax.vmap(F)(s)
+        G = G.at[0].set(G[0] / 2)
+
+        z_ifft = N * jnp.fft.ifft(G)
+        f_complex = jnp.exp(a * t) / T * z_ifft
+        f = jnp.real(f_complex)
+
+        return f, t, z_ifft
+
+    _jax_fft_nilt = fft_nilt_jax
+    return fft_nilt_jax
 
 
 def benchmark_jax(F_jax, a: float, T: float, N: int, n_runs: int = 100, n_warmup: int = 10) -> Optional[Dict[str, float]]:
     """Benchmark JAX FFT-NILT."""
     try:
-        modules = load_jax()
-        jax = modules["jax"]
-        fft_nilt = modules["fft_nilt"]
-    except:
+        import jax
+        fft_nilt = get_jax_fft_nilt()
+    except ImportError:
         return None
 
     # Warmup (JIT compilation)
@@ -273,13 +283,14 @@ def get_dampener_functions():
     def F_numpy(s):
         return omega_n**2 / (s**2 + 2*zeta*omega_n*s + omega_n**2)
 
-    # JAX version (loaded from repro_jax)
+    # JAX version (inline, no external dependency)
     F_jax = None
     try:
-        modules = load_jax()
-        jax_problem = modules["problems"].dampener()
-        F_jax = jax_problem.F_jax
-    except:
+        import jax
+
+        def F_jax(s):
+            return omega_n**2 / (s**2 + 2*zeta*omega_n*s + omega_n**2)
+    except ImportError:
         pass
 
     # PyTorch version

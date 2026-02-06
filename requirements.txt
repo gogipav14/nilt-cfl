@@ -4,3 +4,7 @@
 numpy>=1.20.0
 scipy>=1.7.0
 matplotlib>=3.4.0
+
+# Optional: GPU acceleration for benchmark_numpy_jax_torch.py
+# pip install jax[cuda12]
+# pip install torch

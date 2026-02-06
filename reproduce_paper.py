@@ -32,24 +32,40 @@ def reproduce_figures():
 
 
 def reproduce_table5():
-    """Reproduce Table 5: Accuracy comparison."""
+    """Reproduce Table 5: Accuracy comparison (default vs CFL-informed)."""
     print_header("Table 5: Accuracy Comparison (CFL-informed vs Default)")
 
     from repro_nilt_cfl import reproduce_table2
+    from nilt_fft import fft_nilt as fft_nilt_numpy
+    from problems import get_all_problems
+    from metrics import relative_rmse
+    import numpy as np
 
-    results = reproduce_table2(t_end=10.0, verbose=True)
+    # CFL-informed results
+    cfl_results = reproduce_table2(t_end=10.0, verbose=True)
 
-    # Print table format
+    # Default parameter results for comparison
+    problems = get_all_problems()
+    default_a, default_T, default_N = 1.0, 10.0, 512
+
     print("\nTable 5 data:")
     print(f"{'Problem':<20} {'Default RMSE':>15} {'CFL RMSE':>15} {'Improvement':>12}")
     print("-" * 65)
 
-    for name, data in results.items():
-        default = data.get('default_rmse', float('nan'))
-        cfl = data.get('cfl_rmse', float('nan'))
-        if default > 0 and cfl > 0:
-            improvement = default / cfl
-            print(f"{name:<20} {default:>15.2e} {cfl:>15.2e} {improvement:>12.1f}x")
+    for name, problem in problems.items():
+        if problem.f_ref is None:
+            continue
+        # Default parameters
+        f_def, t_def, _ = fft_nilt_numpy(problem.F, default_a, default_T, default_N)
+        f_ref_def = problem.f_ref(t_def)
+        default_rmse = relative_rmse(f_def, f_ref_def)
+
+        # CFL result
+        cfl_rmse = cfl_results[name].get('rel_rmse', float('nan'))
+
+        if default_rmse > 0 and cfl_rmse > 0 and not np.isnan(cfl_rmse):
+            improvement = default_rmse / cfl_rmse
+            print(f"{name:<20} {default_rmse:>15.2e} {cfl_rmse:>15.2e} {improvement:>12.1f}x")
 
 
 def reproduce_table6():
